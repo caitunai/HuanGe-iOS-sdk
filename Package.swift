@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "HuanGeSdk",
-            url: "https://github.com/caitunai/HuanGe-iOS-sdk/releases/download/0.1.0/HuanGeSdk-0.1.0.xcframework.zip",
-            checksum: "e581dd99ddc3a41c24fc81747b20ee67f4b2bcaef35974d4ce11e20573d1bfd6"
+            url: "https://github.com/caitunai/HuanGe-iOS-sdk/releases/download/0.2.0/HuanGeSdk-0.2.0.xcframework.zip",
+            checksum: "0325b51a637ca7e2eaa511209b59a74c26aea2b6ebf37ea862921d42db6a756b"
         )
     ]
 )
