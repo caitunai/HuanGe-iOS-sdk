@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "HuanGeSdk",
     platforms: [
-        .iOS(.v26)
+        .iOS(.v16)
     ],
     products: [
         .library(
@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "HuanGeSdk",
-            url: "https://github.com/caitunai/HuanGe-iOS-sdk/releases/download/0.3.0/HuanGeSdk-0.3.0.xcframework.zip",
-            checksum: "a4c6c65aa6ccbe7907c5237ff9b22e2c70d48421509018973e764d5bed4f3994"
+            url: "https://github.com/caitunai/HuanGe-iOS-sdk/releases/download/0.4.0/HuanGeSdk-0.4.0.xcframework.zip",
+            checksum: "d599166e8e7c49d03ba18fd670c450c4633f74c957b6a3feffd9823ccc4f55ac"
         )
     ]
 )

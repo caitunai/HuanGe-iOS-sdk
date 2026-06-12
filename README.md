@@ -8,7 +8,7 @@ The SDK provides BLE scanning and connection management, device information quer
 
 ## Requirements
 
-- iOS 26.0 or later
+- iOS 16.0 or later
 - Swift 6.2 or later
 - A supported physical HuanGe BLE device
 - An `NSBluetoothAlwaysUsageDescription` entry in the integrating app

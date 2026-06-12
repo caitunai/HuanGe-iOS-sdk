@@ -4,7 +4,7 @@ HuanGeSdk 是面向环格 BLE 录音设备的闭源二进制 Swift Package，提
 
 ## 1. 接入要求
 
-- iOS 26.0 或更高版本。
+- iOS 16.0 或更高版本。
 - Swift 6.2 或更高版本。
 - 使用支持 HuanGeSdk 的真实 BLE 外设进行验证。
 - App 的 `Info.plist` 必须配置蓝牙使用说明。
