@@ -116,6 +116,67 @@ Every scan stops automatically when `HuanGeConfiguration.scanTimeout` expires. T
 
 `HuanGeDevice.macAddress` is parsed from the final six bytes of Manufacturer Specific Data in the BLE advertisement. It is not derived from `CBPeripheral.identifier`.
 
+## Device Binding and Authentication
+
+Binding uses an application-provided 16-byte key. The app only supplies the key; HuanGeSdk queries the binding state and, when authentication is required, generates a fresh 16-byte nonce and its HMAC-SHA256 value automatically.
+
+Start binding or authentication explicitly after the connection becomes ready. HuanGeSdk does not automatically send binding, authentication, or other control commands after connecting.
+
+```swift
+// Load exactly 16 bytes from Keychain or another application-owned secure store.
+let bindingKey: Data = try await bindingKeyStore.key(for: device.id)
+
+do {
+    let result = try await client.bindOrVerifyDevice(using: bindingKey)
+
+    switch result {
+    case .bound:
+        print("The key was accepted and the device is now bound.")
+    case .verified:
+        print("The existing binding was authenticated.")
+    }
+} catch HuanGeError.bindingVerificationFailed {
+    print("The device rejected the nonce signature. Check the stored key.")
+} catch {
+    print("Binding operation failed: \(error.localizedDescription)")
+}
+```
+
+`bindOrVerifyDevice(using:)` performs the complete recommended flow:
+
+- For an unbound device, it sends the supplied key and returns `.bound` after the device accepts it.
+- For a bound device, it never writes the key again. It performs nonce/HMAC-SHA256 authentication and returns `.verified` on success.
+- A key with any length other than 16 bytes throws `HuanGeError.invalidBindingKeyLength`.
+- An incorrect key used with a bound device throws `HuanGeError.bindingVerificationFailed`.
+
+The lower-level APIs are available when the app needs an explicit workflow:
+
+```swift
+let state = try await client.getDeviceBindingState()
+
+if state == .bound {
+    try await client.verifyDeviceBinding(using: bindingKey)
+}
+```
+
+`verifyDeviceBinding(using:)` only authenticates an already-bound device and never writes a key. Calling it for an unbound device throws `HuanGeError.deviceNotBound`. Binding state responses are also reported through `HuanGeEvent.deviceBindingStateChanged`.
+
+Persist the key before binding and associate it with the correct device. Losing the key prevents future authentication until the device is forcibly unbound using its hardware controls. Production apps should use Keychain or an appropriately secured backend; do not store binding keys in source code, logs, `UserDefaults`, or the caches directory. The Demo app's cache-based key history exists only for hardware testing and is not a production storage design.
+
+To confirm that authentication rejects an incorrect key without changing the device binding, alter a copy and call the verification-only API:
+
+```swift
+var incorrectKey = bindingKey
+incorrectKey[incorrectKey.startIndex] ^= 0xFF
+
+do {
+    try await client.verifyDeviceBinding(using: incorrectKey)
+    assertionFailure("The device unexpectedly accepted an incorrect key.")
+} catch HuanGeError.bindingVerificationFailed {
+    // Expected: the device rejected the HMAC-SHA256 result.
+}
+```
+
 ## Device Queries and Controls
 
 Once the device is connected and notifications are enabled, use the async APIs:
@@ -232,6 +293,7 @@ The integrating app is responsible for:
 
 - UI state and actor switching
 - Bluetooth permission messaging
+- Secure generation, persistence, recovery, and device association of binding keys
 - Raw audio buffering, decoding, and transcription
 - Persisting or processing imported file chunks
 - Downloading and validating OTA firmware
