@@ -159,7 +159,7 @@ if state == .bound {
 
 `verifyDeviceBinding(using:)` 只验证已绑定设备，绝不会下发或覆盖 Key。对未绑定设备调用时会抛出 `HuanGeError.deviceNotBound`。SDK 同时会通过 `HuanGeEvent.deviceBindingStateChanged` 上报绑定状态。
 
-首次绑定前，App 应先可靠保存 Key，并确保 Key 与正确的设备关联。Key 丢失后将无法再次通过身份验证，只能使用设备硬件按键强制解除绑定。正式 App 应使用 Keychain 或经过安全设计的服务端保存方案，不应将 Key 写入源码、日志、`UserDefaults` 或缓存目录。Demo 中将测试 Key 暂存在缓存目录，仅用于真机调试，不应照搬到生产环境。
+首次绑定前，App 应先可靠保存 Key，并确保 Key 与正确的设备关联。Key 丢失后将无法通过已有绑定的身份验证，可通过设备硬件按键强制解除绑定恢复；不要假定所有固件在 Key 丢失后仍允许 App 发起解除绑定。正式 App 应使用 Keychain 或经过安全设计的服务端保存方案，不应将 Key 写入源码、日志、`UserDefaults` 或缓存目录。Demo 中将测试 Key 暂存在缓存目录，仅用于真机调试，不应照搬到生产环境。
 
 可以使用错误 Key 验证设备确实会拒绝无效签名。为了避免修改绑定状态，必须调用仅验证接口：
 
@@ -174,6 +174,44 @@ do {
     // 符合预期：设备拒绝了错误的 HMAC-SHA256 结果。
 }
 ```
+
+### 5.1 解除设备绑定
+
+需要使用包含 `unbindDevice()` 接口的 SDK 二进制版本，以及支持控制指令 20/21 的设备固件。设备连接进入可用状态后，由 App 在用户确认操作后显式调用：
+
+```swift
+do {
+    try await client.unbindDevice()
+    // 设备已明确回复解除成功，此时再更新应用状态并执行本地 Key 保留策略。
+    print("设备已解除绑定")
+} catch HuanGeError.deviceUnbindingFailed {
+    print("设备拒绝解除绑定，请保留已保存的 Key")
+} catch HuanGeError.requestTimedOut {
+    print("未收到解除结果，请保留 Key，稍后重新查询绑定状态")
+} catch {
+    print("无法确认解除绑定成功：\(error.localizedDescription)")
+}
+```
+
+接口签名为 `public func unbindDevice() async throws`，无参数，返回 `Void`，仅在收到设备成功应答后正常返回。App 不需要传入 Key、NONCE、HMAC 或自行组包。此调用不会自动查询绑定状态、执行身份验证、重新绑定或主动断开连接。
+
+对应协议数据区如下：
+
+| 方向 | 数据区 | 含义 |
+| --- | --- | --- |
+| App → 设备 | `00 14` | 控制类型 `0x00`，CMD 20（`0x14`），无参数 |
+| 设备 → App | `00 15 00` | CMD 21（`0x15`），解除绑定成功 |
+| 设备 → App | `00 15 01` | CMD 21（`0x15`），解除绑定失败 |
+
+以上仅为数据区，不是完整 BLE 包；外层魔数、包序号、CRC 和长度由 SDK 封装和解析。
+
+- 成功时还会通过 `client.events` 产生 `HuanGeEvent.deviceBindingStateChanged(.unbound)`。SDK 不切换主线程，App 按需在 `MainActor` 更新 UI。
+- 设备返回失败时抛出 `HuanGeError.deviceUnbindingFailed`；结果参数不是恰好一个字节，或数值不是 `0`/`1` 时，抛出 `HuanGeError.invalidResponse`。
+- 请求使用 `HuanGeConfiguration.requestTimeout`，默认 10 秒。超时、未连接（`notConnected`）或成功应答前断连（`disconnected`）均不能显示为解除成功；仅发送成功也不能视为解除成功。
+- 解除操作与其他控制请求一样进入 FIFO 队列，在 SDK 串行后台队列执行。应用发起的后续操作会在本次成功、失败或超时后继续。
+- SDK 不删除 App 保存的 Key。失败或结果不确定时保留 Key；确认成功后，由 App 决定保留还是删除。需要核对状态时显式调用 `getDeviceBindingState()`，需要重新绑定时显式调用 `bindOrVerifyDevice(using:)`。
+
+Demo 的“设备绑定验证”页面提供“解除设备绑定”按钮及二次确认，解除成功后仍保留测试 Key 输入和缓存，方便再次绑定测试。未连接、绑定操作进行中、OTA 或文件导入进行中时，Demo 禁用解除按钮。
 
 ## 6. 查询与控制设备
 
@@ -292,6 +330,7 @@ OTA 必须使用对应的目标硬件和固件进行验证。设备确认完整�
 - UI 状态管理以及需要时切换到 `MainActor`。
 - 蓝牙权限说明和用户提示。
 - 绑定 Key 的安全生成、持久化、恢复及其与设备的正确关联。
+- 解除绑定前的用户确认，以及确认解除结果后的本地 Key 保留或删除策略。
 - 原始音频缓存、拆帧、解码和转写处理。
 - 保存或处理 SDK 输出的文件数据块。
 - 下载与校验 OTA 固件。
@@ -315,6 +354,8 @@ HuanGeSdk 负责：
 - 连接、断开和重新连接状态正确。
 - 未绑定设备能够完成首次绑定，已绑定设备能够使用正确 Key 通过 NONCE/HMAC-SHA256 验证。
 - 错误 Key 会被设备拒绝，且验证过程不会覆盖设备已有的绑定 Key。
+- 解除绑定收到成功应答后才显示未绑定，并能够手动查询状态及再次绑定。
+- 解除绑定失败、超时或成功应答前断连时，不误报成功、不丢弃 Key；取消确认弹窗不发送指令。
 - 电量、存储空间、固件版本、授权码和时间同步工作正常。
 - App 能持续消费原始实时音频，且不会阻塞 UI。
 - 文件列表、删除和导入工作正常，导入文件由 App 保存。

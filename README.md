@@ -2,7 +2,7 @@
 
 HuanGeSdk is a closed-source binary Swift package for connecting to and operating supported HuanGe BLE recording devices.
 
-The SDK provides BLE scanning and connection management, device information queries, recording control, raw realtime audio, device file operations, button configuration, and OTA firmware transfer.
+The SDK provides BLE scanning and connection management, device binding, authentication and unbinding, device information queries, recording control, raw realtime audio, device file operations, button configuration, and OTA firmware transfer.
 
 [中文接入文档](docs/huange_sdk_integration_zh.md)
 
@@ -161,7 +161,7 @@ if state == .bound {
 
 `verifyDeviceBinding(using:)` only authenticates an already-bound device and never writes a key. Calling it for an unbound device throws `HuanGeError.deviceNotBound`. Binding state responses are also reported through `HuanGeEvent.deviceBindingStateChanged`.
 
-Persist the key before binding and associate it with the correct device. Losing the key prevents future authentication until the device is forcibly unbound using its hardware controls. Production apps should use Keychain or an appropriately secured backend; do not store binding keys in source code, logs, `UserDefaults`, or the caches directory. The Demo app's cache-based key history exists only for hardware testing and is not a production storage design.
+Persist the key before binding and associate it with the correct device. Losing the key prevents authentication of the existing binding. Hardware controls provide a forced-unbinding recovery option; do not assume app-initiated unbinding will remain accessible without the key on every firmware version. Production apps should use Keychain or an appropriately secured backend; do not store binding keys in source code, logs, `UserDefaults`, or the caches directory. The Demo app's cache-based key history exists only for hardware testing and is not a production storage design.
 
 To confirm that authentication rejects an incorrect key without changing the device binding, alter a copy and call the verification-only API:
 
@@ -176,6 +176,45 @@ do {
     // Expected: the device rejected the HMAC-SHA256 result.
 }
 ```
+
+### Unbind a Device
+
+Use an SDK binary version that exposes `unbindDevice()` and device firmware that implements control commands 20/21. After the connection is ready and the user confirms the operation, call:
+
+```swift
+do {
+    try await client.unbindDevice()
+    // The device has acknowledged successful unbinding.
+    // Update application state and apply your stored-key retention policy here.
+    print("The device is now unbound.")
+} catch HuanGeError.deviceUnbindingFailed {
+    print("The device rejected the unbinding request. Keep the stored key.")
+} catch HuanGeError.requestTimedOut {
+    print("No unbinding result was received. Keep the key and query the state later.")
+} catch {
+    print("Unbinding could not be confirmed: \(error.localizedDescription)")
+}
+```
+
+`public func unbindDevice() async throws` takes no arguments and returns `Void` only after the device confirms success. The app does not supply a Key, NONCE, HMAC, or raw packet. The SDK does not automatically query the binding state, authenticate, rebind, or disconnect as part of this call.
+
+The protocol data fields are:
+
+| Direction | Data bytes | Meaning |
+| --- | --- | --- |
+| App to device | `00 14` | Control type `0x00`, CMD 20 (`0x14`), no parameters |
+| Device to app | `00 15 00` | CMD 21 (`0x15`), unbinding succeeded |
+| Device to app | `00 15 01` | CMD 21 (`0x15`), unbinding failed |
+
+These are payloads, not complete BLE packets. The SDK adds and parses the outer header, sequence, CRC, and length fields.
+
+- Success also produces `HuanGeEvent.deviceBindingStateChanged(.unbound)` through `client.events`. The app owns UI updates and switches to `MainActor` when needed.
+- A failure result throws `HuanGeError.deviceUnbindingFailed`. A result other than `0`/`1`, or a result parameter length other than one byte, throws `HuanGeError.invalidResponse`.
+- The request uses `HuanGeConfiguration.requestTimeout` (default 10 seconds). Timeout, missing connection (`notConnected`), or disconnection before confirmation (`disconnected`) must not be presented as successful unbinding. Sending a packet alone does not confirm success.
+- Like other control operations, unbinding enters the FIFO queue and runs on the SDK's serial background queue. A subsequent application-requested operation starts after it succeeds, fails, or times out.
+- The SDK never deletes app-owned keys. Retain the key when the outcome is unsuccessful or unknown. After confirmed success, the app decides whether to retain or remove it. Query again with `getDeviceBindingState()` when reconciliation is needed; use `bindOrVerifyDevice(using:)` explicitly to bind again.
+
+The Demo's device-binding page provides an unbind button with confirmation and deliberately retains the test key input and cache for rebinding. Validate success, device rejection, timeout/disconnection, and subsequent rebinding with the target hardware.
 
 ## Device Queries and Controls
 
@@ -294,6 +333,7 @@ The integrating app is responsible for:
 - UI state and actor switching
 - Bluetooth permission messaging
 - Secure generation, persistence, recovery, and device association of binding keys
+- User confirmation for unbinding and stored-key retention or deletion after a confirmed result
 - Raw audio buffering, decoding, and transcription
 - Persisting or processing imported file chunks
 - Downloading and validating OTA firmware
