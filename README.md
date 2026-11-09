@@ -296,15 +296,26 @@ print("Received \(completion.byteCount) of \(completion.expectedByteCount) bytes
 print("Missing: \(completion.missingByteCount), byte count matches: \(completion.isComplete)")
 ```
 
-`importFile(_:resumeFromOffset:)` remains strict. The new method starts from offset zero and accepts a byte shortfall only after the device reports successful completion. Excess bytes, device rejection, cancellation, disconnection, and timeout still throw. Both APIs use the same `fileImportData` stream and `fileImportCompleted` event; the app must finish writing the actual `completion.byteCount`, not wait for the expected size.
+`importFile(_:resumeFromOffset:)` remains strict. The new method defaults to offset zero and accepts a byte shortfall only after the device reports successful completion. Excess bytes, device rejection, cancellation, disconnection, and timeout still throw. Both APIs use the same `fileImportData` stream and `fileImportCompleted` event; the app must finish writing up to `completion.byteCount`, not wait for the expected size.
 
-No CRC bypass, padding, Opus frame repair, or automatic retransmission is performed. Chunk offsets describe the compact received output, not the positions of missing bytes in the original file. `missingByteCount` measures a size shortfall; `isComplete` only tests byte-count equality, not audio decodability. A successful device end response with no valid body may return zero bytes. This method offers no resume offset because missing positions are unknown. For strict resumed imports, `byteCount` retains the existing meaning of received bytes plus the previously saved prefix.
+Both import methods accept `resumeFromOffset: UInt32`, defaulting to zero. The offset must not exceed `file.sizeBytes`; it is sent to the device as a 4-byte little-endian value. For example:
+
+```swift
+// The app has independently verified a prefix matching this device-file offset.
+let offset: UInt32 = 8192
+let completion = try await client.importFileAllowingPacketLoss(file, resumeFromOffset: offset)
+let bytesReceivedThisRequest = completion.byteCount - UInt64(offset)
+```
+
+For either method, the first chunk offset is the requested offset, and `completion.byteCount` equals that offset plus the bytes received in this request. `expectedByteCount` remains the full device-file size; `missingByteCount` is the difference from this accumulated count. The SDK neither sends the existing prefix again nor validates local storage. The app owns prefix validation, positioning the destination writer, and ensuring writes reach `completion.byteCount`.
+
+No CRC bypass, padding, Opus frame repair, or automatic retransmission is performed. After the requested offset, chunks describe the compact received output, not the positions of missing bytes in the original file. Do not infer a device resume position from the length of a previously lossy local file. `missingByteCount` measures a size shortfall; `isComplete` only tests byte-count equality, not audio decodability or prefix integrity. With no valid body, an accepted device end response returns the requested offset as `byteCount` (zero when starting from zero).
 
 Available file operations:
 
 - `getDeviceFiles()`
 - `importFile(_:resumeFromOffset:)`
-- `importFileAllowingPacketLoss(_:)`
+- `importFileAllowingPacketLoss(_:resumeFromOffset:)`
 - `cancelFileImport()`
 - `deleteFile(_:)`
 - `deleteAllFiles()`

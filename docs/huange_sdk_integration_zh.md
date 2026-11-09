@@ -293,15 +293,26 @@ print("实际接收 \(completion.byteCount)，预期 \(completion.expectedByteCo
 print("缺失 \(completion.missingByteCount) 字节，字节数一致：\(completion.isComplete)")
 ```
 
-原有 `importFile(_:resumeFromOffset:)` 继续严格校验大小。新接口从偏移 0 开始，仅在设备回复成功结束后允许实际字节数不足；接收超量、设备拒绝、取消、断连和超时仍抛出错误。两个接口共用 `fileImportData` 流及 `fileImportCompleted` 事件；App 应等待实际 `completion.byteCount` 写入完成，不能继续等待预期大小，否则有缺失时会一直等待。
+原有 `importFile(_:resumeFromOffset:)` 继续严格校验大小。新接口默认从偏移 0 开始，仅在设备回复成功结束后允许实际字节数不足；接收超量、设备拒绝、取消、断连和超时仍抛出错误。两个接口共用 `fileImportData` 流及 `fileImportCompleted` 事件；App 应等待写入位置达到 `completion.byteCount`，不能继续等待预期大小，否则有缺失时会一直等待。
 
-SDK 不绕过 CRC 校验，不补零、不修复 Opus 帧、不自动重传。数据块 offset 表示紧凑输出的累计位置，不能用于定位原文件的缺失位置。`missingByteCount` 仅表示大小差；`isComplete` 仅表示字节数一致，不保证音频可解码。设备成功结束但没有有效正文时，也可能返回 0 字节。由于缺失位置未知，新接口不提供断点续传参数；原有严格断点续传的 `byteCount` 仍包含已保存的前缀字节。
+两个导入接口均支持 `resumeFromOffset: UInt32`，默认值为 0，不能超过 `file.sizeBytes`；SDK 以 4 Byte 小端字段发送给设备。例如：
+
+```swift
+// App 已独立确认保存的前缀与设备文件的该偏移对应。
+let offset: UInt32 = 8192
+let completion = try await client.importFileAllowingPacketLoss(file, resumeFromOffset: offset)
+let bytesReceivedThisRequest = completion.byteCount - UInt64(offset)
+```
+
+两个接口首个数据块的 offset 都等于请求偏移，`completion.byteCount` 等于请求偏移加本次实际接收量。`expectedByteCount` 仍是设备文件总大小，`missingByteCount` 是预期总大小与该累计量之差。SDK 不重复发送已有前缀，也不检查本地文件；App 自行确认前缀、定位写入位置，并等待写入位置达到 `completion.byteCount`。
+
+SDK 不绕过 CRC 校验，不补零、不修复 Opus 帧、不自动重传。请求偏移之后的数据块按实际接收量紧凑排列，不能用于定位原文件的缺失位置；此前发生过内容缺失的本地文件，不能仅按其长度推断设备续传位置。`missingByteCount` 仅表示大小差；`isComplete` 仅表示字节数一致，不保证前缀完整或音频可解码。设备成功结束但没有有效正文时，`byteCount` 等于请求偏移（从头下载时为 0）。
 
 可用的文件接口：
 
 - `getDeviceFiles()`
 - `importFile(_:resumeFromOffset:)`
-- `importFileAllowingPacketLoss(_:)`
+- `importFileAllowingPacketLoss(_:resumeFromOffset:)`
 - `cancelFileImport()`
 - `deleteFile(_:)`
 - `deleteAllFiles()`
