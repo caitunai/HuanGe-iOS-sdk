@@ -288,10 +288,23 @@ let fileTask = Task { [chunks = client.fileImportData] in
 }
 ```
 
+For raw audio that your application explicitly accepts with missing data, use a binary SDK release exposing the following API:
+
+```swift
+let completion = try await client.importFileAllowingPacketLoss(file)
+print("Received \(completion.byteCount) of \(completion.expectedByteCount) bytes")
+print("Missing: \(completion.missingByteCount), byte count matches: \(completion.isComplete)")
+```
+
+`importFile(_:resumeFromOffset:)` remains strict. The new method starts from offset zero and accepts a byte shortfall only after the device reports successful completion. Excess bytes, device rejection, cancellation, disconnection, and timeout still throw. Both APIs use the same `fileImportData` stream and `fileImportCompleted` event; the app must finish writing the actual `completion.byteCount`, not wait for the expected size.
+
+No CRC bypass, padding, Opus frame repair, or automatic retransmission is performed. Chunk offsets describe the compact received output, not the positions of missing bytes in the original file. `missingByteCount` measures a size shortfall; `isComplete` only tests byte-count equality, not audio decodability. A successful device end response with no valid body may return zero bytes. This method offers no resume offset because missing positions are unknown. For strict resumed imports, `byteCount` retains the existing meaning of received bytes plus the previously saved prefix.
+
 Available file operations:
 
 - `getDeviceFiles()`
 - `importFile(_:resumeFromOffset:)`
+- `importFileAllowingPacketLoss(_:)`
 - `cancelFileImport()`
 - `deleteFile(_:)`
 - `deleteAllFiles()`

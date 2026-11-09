@@ -285,10 +285,23 @@ let fileTask = Task { [chunks = client.fileImportData] in
 }
 ```
 
+对业务允许内容缺失的原始音频，可使用包含以下接口的 SDK 二进制版本：
+
+```swift
+let completion = try await client.importFileAllowingPacketLoss(file)
+print("实际接收 \(completion.byteCount)，预期 \(completion.expectedByteCount) 字节")
+print("缺失 \(completion.missingByteCount) 字节，字节数一致：\(completion.isComplete)")
+```
+
+原有 `importFile(_:resumeFromOffset:)` 继续严格校验大小。新接口从偏移 0 开始，仅在设备回复成功结束后允许实际字节数不足；接收超量、设备拒绝、取消、断连和超时仍抛出错误。两个接口共用 `fileImportData` 流及 `fileImportCompleted` 事件；App 应等待实际 `completion.byteCount` 写入完成，不能继续等待预期大小，否则有缺失时会一直等待。
+
+SDK 不绕过 CRC 校验，不补零、不修复 Opus 帧、不自动重传。数据块 offset 表示紧凑输出的累计位置，不能用于定位原文件的缺失位置。`missingByteCount` 仅表示大小差；`isComplete` 仅表示字节数一致，不保证音频可解码。设备成功结束但没有有效正文时，也可能返回 0 字节。由于缺失位置未知，新接口不提供断点续传参数；原有严格断点续传的 `byteCount` 仍包含已保存的前缀字节。
+
 可用的文件接口：
 
 - `getDeviceFiles()`
 - `importFile(_:resumeFromOffset:)`
+- `importFileAllowingPacketLoss(_:)`
 - `cancelFileImport()`
 - `deleteFile(_:)`
 - `deleteAllFiles()`
